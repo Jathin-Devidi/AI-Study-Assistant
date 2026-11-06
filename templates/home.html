@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ask My Notes · Answers only from your own PDFs</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<main class="wrap">
+  <header class="hero">
+    <a href="{{ url_for('home') }}" class="brand" aria-label="Ask My Notes">
+      <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="brand-icon">
+      <div class="brand-text">
+        <span class="brand-title">Ask My <span class="brand-hl">Notes</span></span>
+        <span class="brand-sub">Answers only from your own PDFs</span>
+      </div>
+    </a>
+    <h1>Ask your notes.<br>Get answers <mark>from the page.</mark></h1>
+    <p class="lede">Upload a PDF of your study notes. Every answer comes only from that document, with the page numbers to check it.</p>
+  </header>
+
+  <section class="drop" id="drop" tabindex="0" role="button" aria-label="Upload a PDF">
+    <input type="file" id="file" accept="application/pdf" hidden>
+    <div class="drop-icon">PDF</div>
+    <p class="drop-title" id="dropTitle">Drop your notes here, or click to choose</p>
+    <p class="drop-sub">PDF only, up to 10 MB. Scanned pages without text can't be read.</p>
+    <p class="error" id="error" role="alert"></p>
+  </section>
+
+  {% if docs %}
+  <section class="recent">
+    <h2>Your documents</h2>
+    <ul>
+      {% for d in docs %}
+      <li>
+        <a href="{{ url_for('ask_page', doc_id=d._id) }}">
+          <span class="name">{{ d.original_name }}</span>
+          <span class="meta">{% if d.pages %}{{ d.pages }} pages{% endif %}</span>
+          <span class="chip {{ d.status }}">{{ d.status }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</main>
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+</body>
+</html>

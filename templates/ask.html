@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ doc.original_name }} · Ask My Notes</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="chat-page">
+<header class="bar">
+  <a href="{{ url_for('home') }}" class="brand bar-brand" aria-label="Ask My Notes">
+    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="brand-icon">
+    <div class="brand-text">
+      <span class="brand-title">Ask My <span class="brand-hl">Notes</span></span>
+      <span class="brand-sub">Answers only from your own PDFs</span>
+    </div>
+  </a>
+  <a href="{{ url_for('home') }}" class="back">← All documents</a>
+  <span class="doc-name">{{ doc.original_name }}</span>
+  <span class="chip {{ doc.status }}" id="status">{{ doc.status }}</span>
+</header>
+
+<main class="thread" id="thread" data-doc="{{ doc._id }}" data-status="{{ doc.status }}">
+  {% if doc.status == 'failed' %}
+    <div class="notice error-box">Reading failed: {{ doc.error }}</div>
+  {% endif %}
+  <div class="notice" id="processing" {% if doc.status != 'processing' %}hidden{% endif %}>Reading your notes. The first upload takes longer while the embedding model loads.</div>
+  {% if doc.status == 'ready' and not history %}
+    <div class="notice" id="empty">Ready. Ask anything the document covers.</div>
+  {% endif %}
+  {% for h in history %}
+    <div class="msg q">{{ h.question }}</div>
+    <div class="msg a"><div class="text">{{ h.answer }}</div>
+      {% if h.sources %}<div class="tabs">{% for p in h.sources %}<span class="tab">p. {{ p }}</span>{% endfor %}</div>{% endif %}
+    </div>
+  {% endfor %}
+</main>
+
+<footer class="composer">
+  <div class="composer-in">
+    <textarea id="q" rows="1" placeholder="Ask a question about this document" {% if doc.status != 'ready' %}disabled{% endif %}></textarea>
+    <button id="send" {% if doc.status != 'ready' %}disabled{% endif %}>Ask</button>
+  </div>
+</footer>
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
