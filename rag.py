@@ -1,12 +1,22 @@
-"""RAG pipeline: PDF -> chunks -> embeddings (ChromaDB) -> Groq answer.
-The embedding model is loaded once per server process."""
-import os, threading, warnings
+"""RAG pipeline: PDF -> chunks -> embeddings (ChromaDB / MongoDB) -> Groq answer.
+The embedding model is loaded once per server process locally, with serverless fallback for Vercel."""
+import os, re, math, threading, warnings
+from collections import Counter
 warnings.filterwarnings("ignore")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import fitz  # PyMuPDF
-import chromadb
 from groq import Groq
-from sentence_transformers import SentenceTransformer
+from pymongo import MongoClient
+
+try:
+    if not os.getenv("VERCEL"):
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+        HAS_LOCAL_VECTORS = True
+    else:
+        HAS_LOCAL_VECTORS = False
+except ImportError:
+    HAS_LOCAL_VECTORS = False
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -35,9 +45,19 @@ Rules:
 _model = None
 _lock = threading.Lock()
 _collection = None
+_mongo_chunks = None
 _groq = None
 _active_groq_model = None
 _unavailable_models = set()
+
+def mongo_chunks():
+    global _mongo_chunks
+    if _mongo_chunks is None:
+        client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"), serverSelectionTimeoutMS=5000)
+        db = client[os.getenv("MONGO_DB", "ai_study_assistant")]
+        _mongo_chunks = db["chunks"]
+        _mongo_chunks.create_index([("document_id", 1)])
+    return _mongo_chunks
 
 def model():
     global _model
@@ -121,9 +141,36 @@ def chunk_text(text):
         start += CHUNK_SIZE - OVERLAP
     return out
 
+def _tokenize(text):
+    return re.findall(r"[a-z0-9]{2,}", text.lower())
+
+def _rank_chunks(question, records, top_k=5):
+    q_tokens = _tokenize(question)
+    if not q_tokens or not records:
+        return records[:top_k]
+    n_docs = len(records)
+    doc_tokens = [_tokenize(r["text"]) for r in records]
+    df = Counter()
+    for toks in doc_tokens:
+        for t in set(toks):
+            df[t] += 1
+    avg_dl = sum(len(t) for t in doc_tokens) / max(n_docs, 1)
+    scored = []
+    for idx, (rec, toks) in enumerate(zip(records, doc_tokens)):
+        tf = Counter(toks)
+        dl = len(toks) or 1
+        score = 0.0
+        for qt in q_tokens:
+            if qt in tf:
+                idf = math.log(1.0 + (n_docs - df[qt] + 0.5) / (df[qt] + 0.5))
+                score += idf * ((tf[qt] * 2.2) / (tf[qt] + 1.2 * (0.25 + 0.75 * (dl / avg_dl))))
+        scored.append((score, idx, rec))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [r for _, _, r in scored[:top_k]]
+
 def ingest(pdf_path, doc_id):
     """Returns (pages, chunk_count). Raises ValueError if no text."""
-    chunks, metas, ids = [], [], []
+    chunks, metas, ids, mongo_docs = [], [], [], []
     with fitz.open(pdf_path) as pdf:
         pages = len(pdf)
         for i, page in enumerate(pdf, start=1):
@@ -131,17 +178,27 @@ def ingest(pdf_path, doc_id):
                 chunks.append(c)
                 metas.append({"document_id": doc_id, "page": i})
                 ids.append(f"{doc_id}-{i}-{j}")
+                mongo_docs.append({"document_id": doc_id, "page": i, "chunk_index": j, "text": c})
     if not chunks:
         raise ValueError("No readable text found. Scanned PDFs are not supported.")
-    embeddings = model().encode(chunks, show_progress_bar=False).tolist()
-    collection().add(ids=ids, documents=chunks, embeddings=embeddings, metadatas=metas)
+    mongo_chunks().insert_many(mongo_docs)
+    if HAS_LOCAL_VECTORS:
+        embeddings = model().encode(chunks, show_progress_bar=False).tolist()
+        collection().add(ids=ids, documents=chunks, embeddings=embeddings, metadatas=metas)
     return pages, len(chunks)
 
 def answer(doc_id, question):
-    q_emb = model().encode([question], show_progress_bar=False).tolist()
-    res = collection().query(query_embeddings=q_emb, n_results=5, where={"document_id": doc_id})
-    docs = res["documents"][0] if res["documents"] else []
-    metas = res["metadatas"][0] if res["metadatas"] else []
+    docs, metas = [], []
+    if HAS_LOCAL_VECTORS:
+        q_emb = model().encode([question], show_progress_bar=False).tolist()
+        res = collection().query(query_embeddings=q_emb, n_results=5, where={"document_id": doc_id})
+        docs = res["documents"][0] if res["documents"] else []
+        metas = res["metadatas"][0] if res["metadatas"] else []
+    if not docs:
+        records = list(mongo_chunks().find({"document_id": doc_id}))
+        top = _rank_chunks(question, records, top_k=5)
+        docs = [r["text"] for r in top]
+        metas = [{"document_id": doc_id, "page": r["page"]} for r in top]
     if not docs:
         return REFUSAL, [], False
     context = "\n\n".join(f"[Page {m['page']}]\n{d}" for d, m in zip(docs, metas))

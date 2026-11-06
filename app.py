@@ -11,7 +11,8 @@ from werkzeug.exceptions import RequestEntityTooLarge
 import rag
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE, "uploads")
+IS_VERCEL = bool(os.getenv("VERCEL"))
+UPLOAD_DIR = "/tmp/uploads" if IS_VERCEL else os.path.join(BASE, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
@@ -71,7 +72,10 @@ def upload():
         "error": None, "pages": None, "created_at": datetime.now(timezone.utc),
     })
     doc_id = str(res.inserted_id)
-    threading.Thread(target=process, args=(doc_id, path), daemon=True).start()
+    if IS_VERCEL:
+        process(doc_id, path)
+    else:
+        threading.Thread(target=process, args=(doc_id, path), daemon=True).start()
     return jsonify(id=doc_id)
 
 @app.get("/api/documents/<doc_id>/status")

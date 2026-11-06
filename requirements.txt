@@ -1,7 +1,5 @@
 flask
 pymongo
 pymupdf
-sentence-transformers
-chromadb
 groq
 python-dotenv
